@@ -132,7 +132,7 @@ public class OptimizeStaffRequest
     public double MinSalesThreshold { get; set; }
 }
 
-// 7. Журнал аудиту спроб порушення тригерів із Лаб 2
+// 7. Журнали аудиту та тригерів із Лаб 2 (DishesAttemptLogs, OrdersLogs, sys.triggers)
 public class AuditLogDto
 {
     public int LogId { get; set; }
@@ -141,3 +141,28 @@ public class AuditLogDto
     public string UserLogin { get; set; } = string.Empty;
     public string StatusMessage { get; set; } = string.Empty;
 }
+
+public class OrderAuditLogDto
+{
+    public int Id { get; set; }
+    public int OrderId { get; set; }
+    public int? CheckNo { get; set; }
+    public string? DishName { get; set; }
+    public string? PaymentType { get; set; }
+    public DateTime ModifyDate { get; set; }
+}
+
+public class SystemTriggerInfoDto
+{
+    public string TableName { get; set; } = string.Empty;
+    public string TriggerName { get; set; } = string.Empty;
+    public string TriggerType { get; set; } = string.Empty;
+    public bool IsDisabled { get; set; }
+    public DateTime CreatedDate { get; set; }
+}
+
+public class UpdateOrderPaymentRequest
+{
+    public string PaymentType { get; set; } = "Картка";
+}
+

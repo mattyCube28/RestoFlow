@@ -233,10 +233,14 @@ BEGIN
         RETURN;
     END
 
-    DELETE FROM dbo.Staff
-    WHERE Information <> N'Manager'
-      AND NOT EXISTS (SELECT 1 FROM dbo.Orders o WHERE o.StaffID = dbo.Staff.StaffID)
-      AND RestID IN (
+    -- Знаходимо співробітників (окрім Manager) із ресторанів, де виручка менша за @MinSalesThreshold
+    DECLARE @StaffToRemove TABLE (StaffID INT);
+
+    INSERT INTO @StaffToRemove (StaffID)
+    SELECT s.StaffID
+    FROM dbo.Staff s
+    WHERE s.Information <> N'Manager'
+      AND s.RestID IN (
           SELECT r.RestID
           FROM dbo.Restaurants r
           LEFT JOIN dbo.Dishes d ON r.RestID = d.RestID
@@ -244,5 +248,14 @@ BEGIN
           GROUP BY r.RestID
           HAVING ISNULL(SUM(d.Price * o.Quantity), 0) < @MinSalesThreshold
       );
+
+    -- Відв'язуємо історичні замовлення (Orders.StaffID = NULL), щоб не порушувати FK_Orders_Staff при звільненні
+    UPDATE dbo.Orders
+    SET StaffID = NULL
+    WHERE StaffID IN (SELECT StaffID FROM @StaffToRemove);
+
+    -- Реально видаляємо співробітників із таблиці dbo.Staff
+    DELETE FROM dbo.Staff
+    WHERE StaffID IN (SELECT StaffID FROM @StaffToRemove);
 END;
 GO

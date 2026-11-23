@@ -85,12 +85,31 @@ export interface AuditLog {
   statusMessage: string;
 }
 
+export interface OrderAuditLog {
+  id: number;
+  orderId: number;
+  checkNo: number | null;
+  dishName: string | null;
+  paymentType: string | null;
+  modifyDate: string;
+}
+
+export interface SystemTriggerInfo {
+  tableName: string;
+  triggerName: string;
+  triggerType: string;
+  isDisabled: boolean;
+  createdDate: string;
+}
+
 export interface LookupData {
   categories: MenuCategory[];
   restaurants: Restaurant[];
   suppliers: Supplier[];
   staff: StaffMember[];
   auditLogs: AuditLog[];
+  orderLogs: OrderAuditLog[];
+  triggers: SystemTriggerInfo[];
 }
 
 export interface DishAnalyticsRow {

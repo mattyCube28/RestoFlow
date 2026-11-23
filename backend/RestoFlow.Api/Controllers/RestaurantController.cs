@@ -206,9 +206,36 @@ public class RestaurantController : ControllerBase
             LEFT JOIN dbo.Restaurants r ON st.RestID = r.RestID
             ORDER BY st.RestID, st.StaffID;
 
-            SELECT TOP 10 LogId, DishName, AttemptDate, UserLogin, StatusMessage
+            SELECT TOP 15 LogId, DishName, AttemptDate, UserLogin, StatusMessage
             FROM dbo.DishesAttemptLogs
-            ORDER BY LogId DESC;";
+            ORDER BY LogId DESC;
+
+            SELECT TOP 15
+                ol.Id,
+                ol.OrderId,
+                o.Check_no AS CheckNo,
+                d.Name AS DishName,
+                o.PaymentType,
+                ol.ModifyDate
+            FROM dbo.OrdersLogs ol
+            LEFT JOIN dbo.Orders o ON ol.OrderId = o.OrderID
+            LEFT JOIN dbo.Dishes d ON o.DishID = d.DishID
+            ORDER BY ol.Id DESC;
+
+            SELECT
+                OBJECT_NAME(t.parent_id) AS TableName,
+                t.name AS TriggerName,
+                CASE
+                    WHEN t.is_instead_of_trigger = 1 THEN 'INSTEAD OF INSERT'
+                    WHEN OBJECTPROPERTY(t.object_id, 'ExecIsUpdateTrigger') = 1 THEN 'AFTER UPDATE'
+                    WHEN OBJECTPROPERTY(t.object_id, 'ExecIsInsertTrigger') = 1 THEN 'AFTER INSERT'
+                    ELSE 'DML TRIGGER'
+                END AS TriggerType,
+                t.is_disabled AS IsDisabled,
+                t.create_date AS CreatedDate
+            FROM sys.triggers t
+            WHERE t.parent_class = 1
+            ORDER BY TableName, TriggerName;";
 
         using var multi = await conn.QueryMultipleAsync(sql);
         var categories = await multi.ReadAsync<MenuCategoryDto>();
@@ -216,6 +243,8 @@ public class RestaurantController : ControllerBase
         var suppliers = await multi.ReadAsync<SupplierDto>();
         var staff = await multi.ReadAsync<StaffMemberDto>();
         var auditLogs = await multi.ReadAsync<AuditLogDto>();
+        var orderLogs = await multi.ReadAsync<OrderAuditLogDto>();
+        var triggers = await multi.ReadAsync<SystemTriggerInfoDto>();
 
         return Ok(new
         {
@@ -223,7 +252,9 @@ public class RestaurantController : ControllerBase
             restaurants,
             suppliers,
             staff,
-            auditLogs
+            auditLogs,
+            orderLogs,
+            triggers
         });
     }
 
@@ -404,23 +435,69 @@ public class RestaurantController : ControllerBase
     }
 
     /// <summary>
-    /// Допоміжний ендпоінт для відновлення демо-персоналу після демонстрації sp_RemoveUnderperformingStaff
+    /// Допоміжний ендпоінт для відновлення повного штату персоналу (включно з Сидоренко С.М. та Ткаченко Т.І.) після демонстрації sp_RemoveUnderperformingStaff
     /// </summary>
     [HttpPost("procedures/restore-demo-staff")]
     public async Task<IActionResult> RestoreDemoStaff()
     {
         using var conn = _dbFactory.CreateConnection();
         const string sql = @"
+            IF NOT EXISTS (SELECT 1 FROM dbo.Staff WHERE Name = N'Сидоренко С.М.')
+            BEGIN
+                INSERT INTO dbo.Staff (Name, Address, Phone, Salary, RestID, Information)
+                VALUES (N'Сидоренко С.М.', N'пров. Морський, 7', '+380672002001', 18500.00, 2, N'Waiter');
+            END
+
+            IF NOT EXISTS (SELECT 1 FROM dbo.Staff WHERE Name = N'Ткаченко Т.І.')
+            BEGIN
+                INSERT INTO dbo.Staff (Name, Address, Phone, Salary, RestID, Information)
+                VALUES (N'Ткаченко Т.І.', N'вул. Лісова, 8', '+380974004002', 19000.00, 4, N'Waiter');
+            END
+
             IF NOT EXISTS (SELECT 1 FROM dbo.Staff WHERE Name = N'Ковальчук О.В.')
             BEGIN
                 INSERT INTO dbo.Staff (Name, Address, Phone, Salary, RestID, Information)
-                VALUES
-                (N'Ковальчук О.В.', N'вул. Університетська, 21', '+380503334455', 18000.00, 5, N'Waiter'),
-                (N'Мельник Д.С.', N'вул. Приморська, 14', '+380678889900', 18500.00, 2, N'Bartender');
+                VALUES (N'Ковальчук О.В.', N'вул. Університетська, 21', '+380503334455', 18000.00, 5, N'Waiter');
+            END
+
+            IF NOT EXISTS (SELECT 1 FROM dbo.Staff WHERE Name = N'Мельник Д.С.')
+            BEGIN
+                INSERT INTO dbo.Staff (Name, Address, Phone, Salary, RestID, Information)
+                VALUES (N'Мельник Д.С.', N'вул. Приморська, 14', '+380678889900', 18500.00, 2, N'Bartender');
             END";
 
         await conn.ExecuteAsync(sql);
-        return Ok(new { success = true, message = "Тестових співробітників для неприбуткових ресторанів додано для повторної демонстрації процедури!" });
+        return Ok(new { success = true, message = "Штат працівників (Сидоренко С.М., Ткаченко Т.І., Ковальчук О.В., Мельник Д.С.) відновлено у таблиці dbo.Staff!" });
+    }
+
+    /// <summary>
+    /// Реальна робоча дія: Зміна способу оплати чека (UPDATE dbo.Orders), що автоматично запускає тригер tr_OrdersLoging із Лаб 2
+    /// </summary>
+    [HttpPut("orders/{orderId:int}/payment")]
+    public async Task<IActionResult> UpdateOrderPayment(int orderId, [FromBody] UpdateOrderPaymentRequest request)
+    {
+        using var conn = _dbFactory.CreateConnection();
+        try
+        {
+            var affected = await conn.ExecuteAsync(
+                "UPDATE dbo.Orders SET PaymentType = @PaymentType WHERE OrderID = @OrderID;",
+                new { OrderID = orderId, PaymentType = request.PaymentType });
+
+            if (affected == 0)
+            {
+                return NotFound(new { error = true, message = $"Замовлення №{orderId} не знайдено." });
+            }
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Спосіб оплати замовлення №{orderId} змінено на «{request.PaymentType}». Тригер dbo.tr_OrdersLoging автоматично записав подію в таблицю аудиту dbo.OrdersLogs!"
+            });
+        }
+        catch (SqlException ex)
+        {
+            return BadRequest(BuildSqlErrorResponse(ex, "dbo.Orders / tr_OrdersLoging"));
+        }
     }
 
     private static object BuildSqlErrorResponse(SqlException ex, string sourceObject)
