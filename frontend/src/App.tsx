@@ -75,8 +75,12 @@ type NavSection = 'pos' | 'procedures' | 'functions' | 'audit';
 type RightPanelTab = 'details' | 'order';
 
 export function App() {
-  const [activeNav, setActiveNav] = useState<NavSection>('pos');
-  const [rightTab, setRightTab] = useState<RightPanelTab>('details');
+  const params = useMemo(() => new URLSearchParams(window.location.search), []);
+  const initialNav = (params.get('tab') as NavSection) || 'pos';
+  const initialRight = (params.get('right') as RightPanelTab) || 'details';
+
+  const [activeNav, setActiveNav] = useState<NavSection>(initialNav);
+  const [rightTab, setRightTab] = useState<RightPanelTab>(initialRight);
 
   const [dishes, setDishes] = useState<DishCard[]>([]);
   const [lookup, setLookup] = useState<LookupData | null>(null);
@@ -192,6 +196,23 @@ export function App() {
   useEffect(() => {
     fetchDashboardData(false);
     runFunctionsQuery('Борщ український з пампушками', 0);
+    if (params.get('demoError') === 'over100') {
+      fetch('/api/restaurant/procedures/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkNo: 3099,
+          dishID: 1,
+          staffID: 2,
+          quantity: 5,
+          paymentType: 'Картка',
+        }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.error) setSqlError(d);
+        });
+    }
   }, []);
 
   useEffect(() => {
