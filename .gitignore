@@ -1,0 +1,34 @@
+# .NET / C#
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+appsettings.Development.json
+*.nupkg
+*.snupkg
+
+# Node.js / React / Vite
+node_modules/
+dist/
+dist-ssr/
+*.local
+.npm
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# IDE & OS
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+*.log
