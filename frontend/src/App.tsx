@@ -3,13 +3,12 @@ import {
   Activity,
   AlertTriangle,
   Award,
+  BarChart3,
   Building2,
   CheckCircle2,
   ChefHat,
   Clock,
   CreditCard,
-  Database,
-  FunctionSquare,
   History,
   LayoutGrid,
   MapPin,
@@ -21,7 +20,6 @@ import {
   ShieldCheck,
   ShoppingBag,
   Star,
-  Terminal,
   Trash2,
   Truck,
   UserCheck,
@@ -71,33 +69,35 @@ function getDishImage(name: string): string {
   return DISH_IMAGES[name] || DEFAULT_DISH_IMAGE;
 }
 
+function cleanText(text: string | null | undefined): string {
+  if (!text) return '';
+  return text.replace(/["«»]/g, '').trim();
+}
+
 type NavSection = 'pos' | 'procedures' | 'functions' | 'audit';
 type RightPanelTab = 'details' | 'order';
 
 export function App() {
-  const params = useMemo(() => new URLSearchParams(window.location.search), []);
-  const initialNav = (params.get('tab') as NavSection) || 'pos';
-  const initialRight = (params.get('right') as RightPanelTab) || 'details';
-
-  const [activeNav, setActiveNav] = useState<NavSection>(initialNav);
-  const [rightTab, setRightTab] = useState<RightPanelTab>(initialRight);
+  const [activeNav, setActiveNav] = useState<NavSection>('pos');
+  const [rightTab, setRightTab] = useState<RightPanelTab>('details');
 
   const [dishes, setDishes] = useState<DishCard[]>([]);
   const [lookup, setLookup] = useState<LookupData | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  // За замовчуванням жодна картка не відкрита — права панель відкривається тільки при кліку на страву!
   const [selectedDishId, setSelectedDishId] = useState<number | null>(null);
   const [masterDetail, setMasterDetail] = useState<DishMasterDetail | null>(null);
   const [loadingDetails, setLoadingDetails] = useState<boolean>(false);
 
-  // Робоча форма створення замовлення / чека (виклик процедури dbo.sp_CreateOrder)
-  const [orderCheckNo, setOrderCheckNo] = useState<number>(3010);
+  // Форма оформлення чека
+  const [orderCheckNo, setOrderCheckNo] = useState<number>(3015);
   const [orderQuantity, setOrderQuantity] = useState<number>(2);
   const [orderStaffId, setOrderStaffId] = useState<number>(2);
   const [orderPaymentType, setOrderPaymentType] = useState<string>('Картка');
 
-  // Стан для вкладки Пункту 3 (Скалярна + Таблична функції — автоматичний перерахунок при зміні дропдаунів)
+  // Розділ аналітики продажів
   const [fnDishName, setFnDishName] = useState<string>('Борщ український з пампушками');
   const [fnCategoryId, setFnCategoryId] = useState<number>(0);
   const [scalarResult, setScalarResult] = useState<{
@@ -105,16 +105,14 @@ export function App() {
     maxOrderResult: string;
     categoryId: number;
     categoryDishCount: number;
-    sqlExecuted: string[];
   } | null>(null);
   const [tvfResult, setTvfResult] = useState<{
     categoryId: number;
     totalDishesInDepartment: number;
-    sqlExecuted: string;
     rows: DishAnalyticsRow[];
   } | null>(null);
 
-  // Робочі форми вкладки Пункту 2 (Керування меню sp_AddMenuDish та персоналом sp_RemoveUnderperformingStaff)
+  // Розділ керування меню та змінами персоналу
   const [newDishName, setNewDishName] = useState<string>('Піца Баффало Гостра');
   const [newDishCategory, setNewDishCategory] = useState<number>(5);
   const [newDishPrice, setNewDishPrice] = useState<number>(285);
@@ -126,12 +124,12 @@ export function App() {
   );
   const [staffThreshold, setStaffThreshold] = useState<number>(3000);
 
-  // Перехоплені виключення СУБД (Пункт 4) та сповіщення операцій
-  const [sqlError, setSqlError] = useState<SqlErrorResponse | null>(null);
+  // Попередження та сповіщення системи
+  const [warningAlert, setWarningAlert] = useState<SqlErrorResponse | null>(null);
   const [successToast, setSuccessToast] = useState<{ title: string; message: string } | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const fetchDashboardData = async (keepSelection = true) => {
+  const fetchDashboardData = async () => {
     try {
       setIsLoading(true);
       const [dishesRes, lookupRes] = await Promise.all([
@@ -142,9 +140,6 @@ export function App() {
       if (dishesRes.ok) {
         const dishesData: DishCard[] = await dishesRes.json();
         setDishes(dishesData);
-        if (dishesData.length > 0 && (!keepSelection || selectedDishId === null)) {
-          setSelectedDishId(dishesData[0].dishID);
-        }
       }
 
       if (lookupRes.ok) {
@@ -167,7 +162,7 @@ export function App() {
         setMasterDetail(data);
       }
     } catch (err) {
-      console.error('Помилка Master-Detail:', err);
+      console.error('Помилка завантаження деталей страви:', err);
     } finally {
       setLoadingDetails(false);
     }
@@ -189,35 +184,20 @@ export function App() {
         setTvfResult(await tableRes.json());
       }
     } catch (err) {
-      console.error('Помилка виконання функцій:', err);
+      console.error('Помилка оновлення аналітики:', err);
     }
   };
 
   useEffect(() => {
-    fetchDashboardData(false);
+    fetchDashboardData();
     runFunctionsQuery('Борщ український з пампушками', 0);
-    if (params.get('demoError') === 'over100') {
-      fetch('/api/restaurant/procedures/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          checkNo: 3099,
-          dishID: 1,
-          staffID: 2,
-          quantity: 5,
-          paymentType: 'Картка',
-        }),
-      })
-        .then((r) => r.json())
-        .then((d) => {
-          if (d.error) setSqlError(d);
-        });
-    }
   }, []);
 
   useEffect(() => {
     if (selectedDishId !== null) {
       fetchDishMasterDetail(selectedDishId);
+    } else {
+      setMasterDetail(null);
     }
   }, [selectedDishId]);
 
@@ -230,24 +210,23 @@ export function App() {
         d.name.toLowerCase().includes(q) ||
         d.categoryName.toLowerCase().includes(q) ||
         d.restaurantName.toLowerCase().includes(q) ||
-        d.supplierCompany.toLowerCase().includes(q) ||
-        `#${d.dishID}`.includes(q);
+        d.supplierCompany.toLowerCase().includes(q);
       return matchesCat && matchesSearch;
     });
   }, [dishes, selectedCategory, searchQuery]);
 
-  // Робоча дія 1: Оформлення продажу обраної страви через процедуру dbo.sp_CreateOrder
+  // Оформлення нового замовлення
   const handleCreateOrder = async () => {
-    const targetDishId = selectedDishId || 1;
+    if (!selectedDishId) return;
     const payload = {
       checkNo: orderCheckNo,
-      dishID: targetDishId,
+      dishID: selectedDishId,
       staffID: orderStaffId,
       quantity: orderQuantity,
       paymentType: orderPaymentType,
     };
 
-    setSqlError(null);
+    setWarningAlert(null);
     setSuccessToast(null);
 
     const res = await fetch('/api/restaurant/procedures/create-order', {
@@ -258,25 +237,25 @@ export function App() {
 
     const data = await res.json();
     if (!res.ok || data.error) {
-      setSqlError(data as SqlErrorResponse);
+      setWarningAlert(data as SqlErrorResponse);
     } else {
       setSuccessToast({
-        title: 'Чек проведено (dbo.sp_CreateOrder)',
-        message: data.message,
+        title: 'Замовлення прийнято',
+        message: cleanText(data.message),
       });
       setOrderCheckNo((prev) => prev + 1);
-      await fetchDashboardData(true);
-      await fetchDishMasterDetail(targetDishId);
+      await fetchDashboardData();
+      await fetchDishMasterDetail(selectedDishId);
       await runFunctionsQuery(fnDishName, fnCategoryId);
     }
   };
 
-  // Робоча дія 2: Зміна типу оплати існуючого замовлення (спрацьовує тригер tr_OrdersLoging -> запис в OrdersLogs)
+  // Зміна способу оплати чека
   const handleCycleOrderPayment = async (orderId: number, currentPayment: string) => {
     const types = ['Картка', 'Готівка', 'Безготівковий'];
     const nextType = types[(types.indexOf(currentPayment) + 1) % types.length];
 
-    setSqlError(null);
+    setWarningAlert(null);
     setSuccessToast(null);
 
     const res = await fetch(`/api/restaurant/orders/${orderId}/payment`, {
@@ -287,32 +266,32 @@ export function App() {
 
     const data = await res.json();
     if (!res.ok || data.error) {
-      setSqlError(data as SqlErrorResponse);
+      setWarningAlert(data as SqlErrorResponse);
     } else {
       setSuccessToast({
-        title: 'Замовлення оновлено (Тригер tr_OrdersLoging)',
-        message: data.message,
+        title: 'Оплату оновлено',
+        message: cleanText(data.message),
       });
       if (selectedDishId !== null) {
         await fetchDishMasterDetail(selectedDishId);
       }
-      await fetchDashboardData(true);
+      await fetchDashboardData();
     }
   };
 
-  // Робоча дія 3: Додавання нової страви в меню через процедуру dbo.sp_AddMenuDish
+  // Додавання нової страви в меню
   const handleAddMenuDish = async () => {
     const payload = {
-      name: newDishName,
+      name: cleanText(newDishName),
       categoryID: newDishCategory,
       price: newDishPrice,
       quantity: newDishQty,
       supplierID: newDishSupplier,
       restID: newDishRest,
-      description: newDishDesc,
+      description: cleanText(newDishDesc),
     };
 
-    setSqlError(null);
+    setWarningAlert(null);
     setSuccessToast(null);
 
     const res = await fetch('/api/restaurant/procedures/add-dish', {
@@ -322,22 +301,22 @@ export function App() {
     });
 
     const data = await res.json();
-    await fetchDashboardData(true);
+    await fetchDashboardData();
     await runFunctionsQuery(fnDishName, fnCategoryId);
 
     if (!res.ok || data.error) {
-      setSqlError(data as SqlErrorResponse);
+      setWarningAlert(data as SqlErrorResponse);
     } else {
       setSuccessToast({
-        title: 'Страву додано (dbo.sp_AddMenuDish)',
-        message: data.message,
+        title: 'Меню оновлено',
+        message: cleanText(data.message),
       });
     }
   };
 
-  // Робоча дія 4: Оптимізація персоналу неприбуткових ресторанів через процедуру ЛР №1 dbo.sp_RemoveUnderperformingStaff
+  // Оптимізація змін персоналу за виручкою закладу
   const handleOptimizeStaff = async () => {
-    setSqlError(null);
+    setWarningAlert(null);
     setSuccessToast(null);
 
     const res = await fetch('/api/restaurant/procedures/optimize-staff', {
@@ -348,13 +327,13 @@ export function App() {
 
     const data = await res.json();
     if (!res.ok || data.error) {
-      setSqlError(data as SqlErrorResponse);
+      setWarningAlert(data as SqlErrorResponse);
     } else {
       setSuccessToast({
-        title: 'Процедуру dbo.sp_RemoveUnderperformingStaff виконано!',
-        message: data.message,
+        title: 'Штатний розклад оновлено',
+        message: cleanText(data.message),
       });
-      await fetchDashboardData(true);
+      await fetchDashboardData();
       if (selectedDishId !== null) {
         await fetchDishMasterDetail(selectedDishId);
       }
@@ -362,15 +341,15 @@ export function App() {
   };
 
   const handleRestoreDemoStaff = async () => {
-    setSqlError(null);
+    setWarningAlert(null);
     const res = await fetch('/api/restaurant/procedures/restore-demo-staff', { method: 'POST' });
     if (res.ok) {
       const data = await res.json();
       setSuccessToast({
-        title: 'Штат персоналу відновлено в БД',
-        message: data.message,
+        title: 'Зміну працівників відновлено',
+        message: cleanText(data.message),
       });
-      await fetchDashboardData(true);
+      await fetchDashboardData();
     }
   };
 
@@ -383,15 +362,18 @@ export function App() {
     [dishes]
   );
 
+  // Права панель показується ТІЛЬКИ на першій сторінці ('pos') і ТІЛЬКИ коли обрана картка страви!
+  const showRightPanel = activeNav === 'pos' && selectedDishId !== null;
+
   return (
     <div className="min-h-screen bg-[#0e0e11] text-[#f4f4f6] flex selection:bg-[#ff6b00] selection:text-white">
-      {/* ЛІВИЙ ІКОНКОВИЙ САЙДБАР */}
+      {/* ЛІВИЙ САЙДБАР */}
       <aside className="w-20 bg-[#15151a] border-r border-white/5 flex flex-col items-center py-6 justify-between shrink-0 z-20">
         <div className="flex flex-col items-center gap-8">
           <div
             onClick={() => setActiveNav('pos')}
             className="w-12 h-12 rounded-2xl bg-[#1e1e26] border border-[#ff6b00]/30 flex items-center justify-center cursor-pointer shadow-lg shadow-[#ff6b00]/10 hover:scale-105 transition"
-            title="RestoFlow POS & DBMS"
+            title="RestoFlow POS"
           >
             <div className="grid grid-cols-2 gap-1.5 rotate-45">
               <span className="w-2 h-2 rounded-full bg-[#ff6b00]" />
@@ -404,26 +386,26 @@ export function App() {
           <nav className="flex flex-col gap-4">
             <button
               onClick={() => setActiveNav('pos')}
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer relative group ${
+              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
                 activeNav === 'pos'
                   ? 'bg-[#ff6b00] text-white shadow-lg shadow-[#ff6b00]/30'
                   : 'text-zinc-400 hover:bg-[#22222b] hover:text-white'
               }`}
-              title="Каса POS & Master-Detail"
+              title="Каса та Меню"
             >
               <LayoutGrid className="w-5 h-5" />
             </button>
 
             <button
               onClick={() => setActiveNav('procedures')}
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer relative group ${
+              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
                 activeNav === 'procedures'
                   ? 'bg-[#ff6b00] text-white shadow-lg shadow-[#ff6b00]/30'
                   : 'text-zinc-400 hover:bg-[#22222b] hover:text-white'
               }`}
-              title="Керування меню & Персоналом (Збережені процедури)"
+              title="Управління меню та персоналом"
             >
-              <Terminal className="w-5 h-5" />
+              <Users className="w-5 h-5" />
             </button>
 
             <button
@@ -431,24 +413,24 @@ export function App() {
                 setActiveNav('functions');
                 runFunctionsQuery(fnDishName, fnCategoryId);
               }}
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer relative group ${
+              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
                 activeNav === 'functions'
                   ? 'bg-[#ff6b00] text-white shadow-lg shadow-[#ff6b00]/30'
                   : 'text-zinc-400 hover:bg-[#22222b] hover:text-white'
               }`}
-              title="Аналітика функцій (Скалярні & Таблична)"
+              title="Аналітика продажів та цехів"
             >
-              <FunctionSquare className="w-5 h-5" />
+              <BarChart3 className="w-5 h-5" />
             </button>
 
             <button
               onClick={() => setActiveNav('audit')}
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer relative group ${
+              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
                 activeNav === 'audit'
                   ? 'bg-[#ff6b00] text-white shadow-lg shadow-[#ff6b00]/30'
                   : 'text-zinc-400 hover:bg-[#22222b] hover:text-white'
               }`}
-              title="Журнали аудиту та тригерів СУБД"
+              title="Журнал операцій"
             >
               <Activity className="w-5 h-5" />
             </button>
@@ -457,42 +439,42 @@ export function App() {
 
         <div className="flex flex-col items-center gap-4">
           <button
-            onClick={() => fetchDashboardData(true)}
+            onClick={() => fetchDashboardData()}
             className="w-11 h-11 rounded-2xl bg-[#1e1e26] text-zinc-400 hover:text-[#ff6b00] flex items-center justify-center transition cursor-pointer"
-            title="Синхронізувати з MS SQL Server"
+            title="Оновити дані"
           >
             <RefreshCw className={`w-5 h-5 ${isLoading ? 'animate-spin text-[#ff6b00]' : ''}`} />
           </button>
           <div
             className="w-3 h-3 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20"
-            title="MS SQL Server: RestaurantDB Online"
+            title="Зміна активна"
           />
         </div>
       </aside>
 
-      {/* ОСНОВНИЙ КОНТЕЙНЕР: ЦЕНТРАЛЬНА ОБЛАСТЬ + ПРАВА ПАНЕЛЬ КАСИ */}
+      {/* ОСНОВНИЙ КОНТЕЙНЕР */}
       <div className="flex-1 flex flex-col lg:flex-row min-w-0">
-        {/* ЦЕНТРАЛЬНА РОБОЧА ОБЛАСТЬ */}
+        {/* ЦЕНТРАЛЬНА ОБЛАСТЬ */}
         <main className="flex-1 flex flex-col min-w-0 p-5 lg:p-7 overflow-y-auto">
-          {/* ВЕРХНІЙ БАР */}
+          {/* ВЕРХНІЙ БАР РЕСТОРАНУ */}
           <header className="bg-[#18181f] border border-white/5 rounded-3xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-4 mb-5 shadow-xl">
             <div className="flex items-center gap-3.5">
               <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-[#ff6b00] to-amber-400 p-0.5 shrink-0">
                 <div className="w-full h-full rounded-full bg-[#18181f] flex items-center justify-center font-bold text-sm text-[#ff6b00]">
-                  МЄ
+                  RF
                 </div>
               </div>
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="font-semibold text-base tracking-tight text-white">
-                    Matvii Yeromenko
+                    RestoFlow POS
                   </h1>
                   <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-[#ff6b00]/15 text-[#ff8533] border border-[#ff6b00]/30">
-                    ПЗПІ-24-2 • Варіант 5
+                    Адміністратор зміни
                   </span>
                 </div>
                 <p className="text-xs text-zinc-400">
-                  MS SQL Server (`RestaurantDB`) • ASP.NET Core 8 + Dapper
+                  Мережа ресторанів • Касовий термінал та облік кухні
                 </p>
               </div>
             </div>
@@ -503,7 +485,7 @@ export function App() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Пошук страви за назвою, цехом або рестораном..."
+                placeholder="Пошук страви за назвою, цехом або закладом..."
                 className="w-full bg-[#22222b] border border-white/5 focus:border-[#ff6b00]/60 rounded-full pl-11 pr-9 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:outline-none transition"
               />
               {searchQuery && (
@@ -526,13 +508,13 @@ export function App() {
               <div className="bg-[#22222b] px-3.5 py-2 rounded-2xl border border-white/5">
                 <div className="text-[11px] text-zinc-400">Продано порцій</div>
                 <div className="text-sm font-bold text-[#ff8533] whitespace-nowrap">
-                  {totalChainSoldPortions} од.
+                  {totalChainSoldPortions} порц.
                 </div>
               </div>
             </div>
           </header>
 
-          {/* НАВІГАЦІЯ РОБОЧИМИ МОДУЛЯМИ (без обрізання тексту) */}
+          {/* НАВІГАЦІЯ РОЗДІЛАМИ РЕСТОРАНУ */}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
             <button
               onClick={() => setActiveNav('pos')}
@@ -549,11 +531,9 @@ export function App() {
               />
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-zinc-400">
-                  1. POS Термінал
+                  Зал та Каса
                 </div>
-                <div className="text-xs font-semibold leading-tight mt-0.5">
-                  Меню & Master-Detail
-                </div>
+                <div className="text-xs font-semibold leading-tight mt-0.5">Меню закладів</div>
               </div>
             </button>
 
@@ -565,17 +545,17 @@ export function App() {
                   : 'bg-[#18181f] border-white/5 text-zinc-400 hover:bg-[#1f1f29]'
               }`}
             >
-              <Terminal
+              <Users
                 className={`w-5 h-5 shrink-0 ${
                   activeNav === 'procedures' ? 'text-[#ff6b00]' : 'text-zinc-500'
                 }`}
               />
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-zinc-400">
-                  2. Адміністрування
+                  Управління
                 </div>
                 <div className="text-xs font-semibold leading-tight mt-0.5">
-                  Процедури: Меню & Штат
+                  Нові страви та персонал
                 </div>
               </div>
             </button>
@@ -591,17 +571,15 @@ export function App() {
                   : 'bg-[#18181f] border-white/5 text-zinc-400 hover:bg-[#1f1f29]'
               }`}
             >
-              <FunctionSquare
+              <BarChart3
                 className={`w-5 h-5 shrink-0 ${
                   activeNav === 'functions' ? 'text-[#ff6b00]' : 'text-zinc-500'
                 }`}
               />
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-zinc-400">
-                  3. Аналітика цехів
-                </div>
+                <div className="text-[10px] uppercase tracking-wider text-zinc-400">Звітність</div>
                 <div className="text-xs font-semibold leading-tight mt-0.5">
-                  Скалярні & Таблична функції
+                  Аналітика кухонних цехів
                 </div>
               </div>
             </button>
@@ -620,49 +598,40 @@ export function App() {
                 }`}
               />
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-zinc-400">
-                  4. Моніторинг СУБД
-                </div>
+                <div className="text-[10px] uppercase tracking-wider text-zinc-400">Контроль</div>
                 <div className="text-xs font-semibold leading-tight mt-0.5">
-                  Журнали Тригерів & Логи БД
+                  Журнал касових операцій
                 </div>
               </div>
             </button>
           </div>
 
-          {/* ГЛОБАЛЬНИЙ БАНЕР ПЕРЕХОПЛЕНОГО ВИКЛЮЧЕННЯ СУБД (Спрацьовує при будь-якому порушенні правил БД у формах) */}
-          {sqlError && (
-            <div className="mb-5 bg-red-950/75 border-2 border-red-500/80 rounded-3xl p-5 shadow-2xl">
+          {/* ПОПЕРЕДЖЕННЯ СИСТЕМИ (замість технічних помилок тригерів) */}
+          {warningAlert && (
+            <div className="mb-5 bg-amber-950/70 border border-amber-500/70 rounded-3xl p-4 shadow-2xl">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-3.5">
-                  <div className="w-11 h-11 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center shrink-0 text-red-400">
-                    <AlertTriangle className="w-6 h-6" />
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 text-amber-400">
+                    <AlertTriangle className="w-5 h-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                      <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-red-500 text-white">
-                        Виключення MS SQL Server
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500 text-black">
+                        Попередження системи контролю
                       </span>
-                      <span className="text-xs font-mono text-red-200 bg-red-950 px-2.5 py-0.5 rounded-lg border border-red-500/30">
-                        Msg {sqlError.sqlErrorNumber} • Severity {sqlError.sqlClass} • State{' '}
-                        {sqlError.sqlState}
-                      </span>
-                      <span className="text-xs font-mono text-amber-300 bg-black/40 px-2.5 py-0.5 rounded-lg">
-                        Джерело: {sqlError.procedureOrTrigger} (Рядок {sqlError.lineNumber})
-                      </span>
+                      <span className="text-xs text-amber-200/80">{warningAlert.timestamp}</span>
                     </div>
-                    <p className="text-sm font-semibold text-white leading-relaxed break-words">
-                      {sqlError.message}
+                    <p className="text-sm font-semibold text-white leading-relaxed">
+                      {cleanText(warningAlert.message)}
                     </p>
-                    <p className="text-xs text-red-300/80 mt-1">
-                      Транзакцію автоматично відкочено сервером бази даних (RAISERROR / ROLLBACK),
-                      перехоплено через SqlException у C# та оброблено клієнтом.
+                    <p className="text-xs text-amber-200/75 mt-0.5">
+                      Операцію призупинено автоматичним правилом контролю замовлень та залишків кухні.
                     </p>
                   </div>
                 </div>
                 <button
-                  onClick={() => setSqlError(null)}
-                  className="text-red-300 hover:text-white p-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 transition cursor-pointer shrink-0"
+                  onClick={() => setWarningAlert(null)}
+                  className="text-amber-300 hover:text-white p-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 transition cursor-pointer shrink-0"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -691,11 +660,11 @@ export function App() {
           )}
 
           {/* =================================================================== */}
-          {/* РОЗДІЛ 1: POS МЕНЮ ТА MASTER-DETAIL (Реальне замовлення страв)      */}
+          {/* СТОРІНКА 1: МЕНЮ ЗАКЛАДІВ                                           */}
           {/* =================================================================== */}
           {activeNav === 'pos' && (
             <>
-              {/* Капсульні вкладки категорій меню */}
+              {/* Капсульні вкладки категорій */}
               <div className="flex items-center gap-2.5 overflow-x-auto pb-3 mb-4">
                 <button
                   onClick={() => setSelectedCategory(0)}
@@ -713,7 +682,7 @@ export function App() {
                     <UtensilsCrossed className="w-3.5 h-3.5" />
                   </span>
                   <span>Усі страви</span>
-                  <span className="text-xs opacity-80">({dishes.length})</span>
+                  <span className="text-xs opacity-80">{dishes.length}</span>
                 </button>
 
                 {lookup?.categories.map((cat) => {
@@ -735,15 +704,19 @@ export function App() {
                       >
                         <ChefHat className="w-3.5 h-3.5" />
                       </span>
-                      <span>{cat.categoryName}</span>
-                      <span className="text-xs opacity-75">({cat.dishCount})</span>
+                      <span>{cleanText(cat.categoryName)}</span>
+                      <span className="text-xs opacity-75">{cat.dishCount}</span>
                     </button>
                   );
                 })}
               </div>
 
-              {/* СІТКА КАРТОК СТРАВ (виправлено бейджі зверху на фото, щоб ніколи не перекривали один одного!) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+              {/* СІТКА КАРТОК СТРАВ */}
+              <div
+                className={`grid grid-cols-1 md:grid-cols-2 ${
+                  showRightPanel ? 'xl:grid-cols-3' : 'xl:grid-cols-4'
+                } gap-5`}
+              >
                 {filteredDishes.map((dish) => {
                   const isSelected = dish.dishID === selectedDishId;
                   const isAtLimit = dish.totalSoldQuantity >= 100;
@@ -754,6 +727,7 @@ export function App() {
                       key={dish.dishID}
                       onClick={() => {
                         setSelectedDishId(dish.dishID);
+                        setRightTab('details');
                       }}
                       className={`group bg-[#191920] rounded-3xl p-4 border transition-all duration-200 cursor-pointer flex flex-col justify-between ${
                         isSelected
@@ -762,7 +736,6 @@ export function App() {
                       }`}
                     >
                       <div>
-                        {/* Зображення страви з охайним flex-рядком бейджів зверху та знизу */}
                         <div className="relative h-44 w-full rounded-2xl overflow-hidden mb-3.5 bg-[#25252f]">
                           <img
                             src={getDishImage(dish.name)}
@@ -771,17 +744,16 @@ export function App() {
                           />
                           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-black/40" />
 
-                          {/* Верхній рядок бейджів — flex justify-between gap-2, ніякого накладання! */}
                           <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2">
                             <div className="bg-black/75 backdrop-blur-md text-white text-[11px] font-medium px-2.5 py-1 rounded-full flex items-center gap-1 border border-white/10 min-w-0 max-w-[55%]">
                               <MapPin className="w-3 h-3 text-[#ff6b00] shrink-0" />
-                              <span className="truncate">{dish.restaurantName}</span>
+                              <span className="truncate">{cleanText(dish.restaurantName)}</span>
                             </div>
 
                             <div
                               className={`text-[11px] font-semibold px-2.5 py-1 rounded-full backdrop-blur-md border shrink-0 whitespace-nowrap ${
                                 isAtLimit
-                                  ? 'bg-red-500/90 text-white border-red-400'
+                                  ? 'bg-amber-500/90 text-black border-amber-400'
                                   : 'bg-black/75 text-emerald-300 border-white/10'
                               }`}
                             >
@@ -789,23 +761,22 @@ export function App() {
                             </div>
                           </div>
 
-                          {/* Нижній рядок на фото */}
                           <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 text-[11px] text-zinc-200">
                             <span className="bg-black/70 backdrop-blur-sm px-2.5 py-0.5 rounded-md truncate">
-                              {dish.kitchenStation}
+                              {cleanText(dish.kitchenStation)}
                             </span>
                             <span className="bg-black/70 backdrop-blur-sm px-2.5 py-0.5 rounded-md shrink-0">
-                              Склад: {dish.quantity} порц.
+                              Залишок: {dish.quantity} порц.
                             </span>
                           </div>
                         </div>
 
                         <h3 className="font-bold text-base text-white group-hover:text-[#ff8533] transition leading-snug">
-                          {dish.name}
+                          {cleanText(dish.name)}
                         </h3>
                         <p className="text-xs text-zinc-400 mt-1 line-clamp-2 leading-relaxed">
-                          {dish.description ||
-                            `${dish.categoryName} • Постачальник: ${dish.supplierCompany}`}
+                          {cleanText(dish.description) ||
+                            `${cleanText(dish.categoryName)} • Постачальник: ${cleanText(dish.supplierCompany)}`}
                         </p>
                       </div>
 
@@ -830,7 +801,6 @@ export function App() {
                               ? 'bg-[#ff6b00] text-white shadow-md shadow-[#ff6b00]/30'
                               : 'bg-[#262631] text-zinc-200 hover:bg-[#ff6b00] hover:text-white'
                           }`}
-                          title="Замовити страву через касу (dbo.sp_CreateOrder)"
                         >
                           <ShoppingBag className="w-3.5 h-3.5" />
                           <span>Замовити</span>
@@ -844,40 +814,29 @@ export function App() {
           )}
 
           {/* =================================================================== */}
-          {/* РОЗДІЛ 2: КЕРУВАННЯ МЕНЮ ТА ШТАТОМ (Виконання збережених процедур)  */}
+          {/* СТОРІНКА 2: УПРАВЛІННЯ МЕНЮ ТА ПЕРСОНАЛОМ                           */}
           {/* =================================================================== */}
           {activeNav === 'procedures' && (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-              {/* ЛІВА КАРТКА: Додавання нової страви в меню (dbo.sp_AddMenuDish) */}
+              {/* ЛІВА КАРТКА: Нова страва в меню */}
               <div className="bg-[#18181f] border border-white/5 rounded-3xl p-6 shadow-xl">
-                <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-[#ff6b00]/15 text-[#ff6b00] flex items-center justify-center shrink-0">
-                      <Plus className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-base text-white leading-snug">
-                        Додавання страви в меню
-                      </h3>
-                      <p className="text-xs text-zinc-400 mt-0.5">
-                        Процедура <code className="text-[#ff8533]">dbo.sp_AddMenuDish</code> +
-                        тригер робочого часу <code className="text-amber-300">createOrdersTrigger</code>
-                      </p>
-                    </div>
+                <div className="flex items-start gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-2xl bg-[#ff6b00]/15 text-[#ff6b00] flex items-center justify-center shrink-0">
+                    <Plus className="w-5 h-5" />
                   </div>
-                </div>
-
-                <div className="bg-[#22222b] rounded-2xl p-3.5 border border-white/5 text-xs text-zinc-300 mb-4 leading-relaxed">
-                  Додає нову позицію у таблицю <code className="text-white">dbo.Dishes</code>. Якщо
-                  ввести ціну <code className="text-red-300">&lt;= 0</code> або порожню назву,
-                  процедура БД згенерує виключення <code className="text-red-300">RAISERROR</code>.
-                  Також при вставці спрацьовує тригер <code className="text-amber-300">createOrdersTrigger</code>{' '}
-                  (перевірка робочого часу 09:00–18:00 пн–пт).
+                  <div>
+                    <h3 className="font-bold text-base text-white leading-snug">
+                      Додати нову страву до меню
+                    </h3>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      Реєстрація нової технологічної карти страви для кухні та касового термінала
+                    </p>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div className="sm:col-span-2">
-                    <label className="text-xs text-zinc-400 block mb-1">Назва страви (@Name)</label>
+                    <label className="text-xs text-zinc-400 block mb-1">Назва страви</label>
                     <input
                       type="text"
                       value={newDishName}
@@ -887,9 +846,7 @@ export function App() {
                   </div>
 
                   <div>
-                    <label className="text-xs text-zinc-400 block mb-1">
-                      Категорія цеху (@CategoryID)
-                    </label>
+                    <label className="text-xs text-zinc-400 block mb-1">Категорія цеху</label>
                     <select
                       value={newDishCategory}
                       onChange={(e) => setNewDishCategory(Number(e.target.value))}
@@ -897,16 +854,14 @@ export function App() {
                     >
                       {lookup?.categories.map((c) => (
                         <option key={c.categoryID} value={c.categoryID}>
-                          #{c.categoryID} — {c.categoryName}
+                          {cleanText(c.categoryName)} — {cleanText(c.kitchenStation)}
                         </option>
                       ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="text-xs text-zinc-400 block mb-1">
-                      Заклад мережі (@RestID)
-                    </label>
+                    <label className="text-xs text-zinc-400 block mb-1">Заклад мережі</label>
                     <select
                       value={newDishRest}
                       onChange={(e) => setNewDishRest(Number(e.target.value))}
@@ -914,16 +869,14 @@ export function App() {
                     >
                       {lookup?.restaurants.map((r) => (
                         <option key={r.restID} value={r.restID}>
-                          #{r.restID} — {r.name} ({r.city})
+                          {cleanText(r.name)} — {cleanText(r.city)}
                         </option>
                       ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="text-xs text-zinc-400 block mb-1">
-                      Ціна страви, грн (@Price)
-                    </label>
+                    <label className="text-xs text-zinc-400 block mb-1">Ціна страви, грн</label>
                     <input
                       type="number"
                       value={newDishPrice}
@@ -934,7 +887,7 @@ export function App() {
 
                   <div>
                     <label className="text-xs text-zinc-400 block mb-1">
-                      Початковий склад (@Quantity)
+                      Кількість порцій на кухні
                     </label>
                     <input
                       type="number"
@@ -945,9 +898,7 @@ export function App() {
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="text-xs text-zinc-400 block mb-1">
-                      Постачальник (@SupplierID)
-                    </label>
+                    <label className="text-xs text-zinc-400 block mb-1">Постачальник продуктів</label>
                     <select
                       value={newDishSupplier}
                       onChange={(e) => setNewDishSupplier(Number(e.target.value))}
@@ -955,16 +906,14 @@ export function App() {
                     >
                       {lookup?.suppliers.map((s) => (
                         <option key={s.supplierID} value={s.supplierID}>
-                          #{s.supplierID} — {s.companyName} ({s.city})
+                          {cleanText(s.companyName)} — {cleanText(s.city)}
                         </option>
                       ))}
                     </select>
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="text-xs text-zinc-400 block mb-1">
-                      Опис рецептури (@Description)
-                    </label>
+                    <label className="text-xs text-zinc-400 block mb-1">Склад та опис подачі</label>
                     <input
                       type="text"
                       value={newDishDesc}
@@ -979,11 +928,11 @@ export function App() {
                   className="mt-5 w-full bg-[#ff6b00] hover:bg-[#ff7b1a] text-white font-semibold py-3 rounded-2xl shadow-lg shadow-[#ff6b00]/25 transition cursor-pointer flex items-center justify-center gap-2 text-sm"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>Додати страву в меню (EXEC dbo.sp_AddMenuDish)</span>
+                  <span>Додати страву до меню</span>
                 </button>
               </div>
 
-              {/* ПРАВА КАРТКА: Оптимізація штату персоналу з ЛР №1 (dbo.sp_RemoveUnderperformingStaff) */}
+              {/* ПРАВА КАРТКА: Оптимізація змін персоналу */}
               <div className="bg-[#18181f] border border-white/5 rounded-3xl p-6 shadow-xl">
                 <div className="flex items-start gap-3 mb-4">
                   <div className="w-10 h-10 rounded-2xl bg-amber-500/15 text-amber-400 flex items-center justify-center shrink-0">
@@ -991,26 +940,17 @@ export function App() {
                   </div>
                   <div className="min-w-0">
                     <h3 className="font-bold text-base text-white leading-snug">
-                      Оптимізація штату персоналу (ЛР №1, Завдання 14)
+                      Управління змінами персоналу за рентабельністю
                     </h3>
-                    <p className="text-xs text-zinc-400 mt-0.5 break-all">
-                      Процедура <code className="text-amber-300">dbo.sp_RemoveUnderperformingStaff</code>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      Автоматичне скорочення лінійного персоналу у закладах із виручкою нижче плану
                     </p>
                   </div>
                 </div>
 
-                <div className="bg-[#22222b] rounded-2xl p-3.5 border border-white/5 text-xs text-zinc-300 mb-4 leading-relaxed">
-                  Звільняє працівників (крім <code className="text-emerald-300">Manager</code>) із
-                  ресторанів, чия сумарна виручка менша за поріг{' '}
-                  <code className="text-amber-300">@MinSalesThreshold</code>. Працівники, які
-                  підпадають під скорочення при поточному порозі, підсвічені червоним бейджем{' '}
-                  <b>«Під скорочення»</b>. При введенні від&apos;ємного порогу генерується
-                  виключення БД.
-                </div>
-
                 <div className="mb-4">
                   <label className="text-xs text-zinc-400 block mb-1.5">
-                    Мінімальний поріг виручки ресторану (@MinSalesThreshold, грн):
+                    Плановий показник виручки закладу, грн:
                   </label>
                   <div className="flex flex-wrap sm:flex-nowrap gap-2.5">
                     <input
@@ -1024,21 +964,20 @@ export function App() {
                       className="w-full sm:w-auto bg-[#ff6b00] hover:bg-[#ff7b1a] text-white font-semibold px-5 py-2.5 rounded-xl transition cursor-pointer flex items-center justify-center gap-2 shrink-0 text-sm"
                     >
                       <Trash2 className="w-4 h-4" />
-                      <span>Скоротити штат</span>
+                      <span>Оптимізувати штат</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Таблиця штату (виправлено внутрішні відступи та висоту рядків — нічого не налізає на шапку!) */}
                 <div className="border border-white/5 rounded-2xl overflow-hidden bg-[#14141a]">
                   <div className="overflow-x-auto max-h-72 overflow-y-auto">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead className="bg-[#22222b] text-zinc-300 sticky top-0 z-10 border-b border-white/10">
                         <tr>
-                          <th className="py-3 px-3.5 font-semibold">ПІБ працівника</th>
+                          <th className="py-3 px-3.5 font-semibold">Працівник</th>
                           <th className="py-3 px-3 font-semibold">Посада</th>
-                          <th className="py-3 px-3 font-semibold">Ресторан</th>
-                          <th className="py-3 px-3.5 font-semibold text-right">Виручка / Статус</th>
+                          <th className="py-3 px-3 font-semibold">Заклад</th>
+                          <th className="py-3 px-3.5 font-semibold text-right">Виручка закладу</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
@@ -1051,11 +990,13 @@ export function App() {
                             <tr
                               key={st.staffID}
                               className={`transition ${
-                                willBeRemoved ? 'bg-red-500/10 hover:bg-red-500/15' : 'hover:bg-white/5'
+                                willBeRemoved
+                                  ? 'bg-amber-500/10 hover:bg-amber-500/15'
+                                  : 'hover:bg-white/5'
                               }`}
                             >
                               <td className="py-3 px-3.5 font-medium text-white whitespace-nowrap">
-                                #{st.staffID} {st.name}
+                                {cleanText(st.name)}
                               </td>
                               <td className="py-3 px-3 whitespace-nowrap">
                                 <span
@@ -1065,29 +1006,29 @@ export function App() {
                                       : 'bg-zinc-800 text-zinc-300'
                                   }`}
                                 >
-                                  {st.information}
+                                  {cleanText(st.information)}
                                 </span>
                               </td>
                               <td className="py-3 px-3 text-zinc-300 whitespace-nowrap">
-                                {st.restaurantName}
+                                {cleanText(st.restaurantName)}
                               </td>
                               <td className="py-3 px-3.5 text-right whitespace-nowrap">
                                 <div
                                   className={`font-bold ${
-                                    isBelowThreshold ? 'text-red-400' : 'text-emerald-400'
+                                    isBelowThreshold ? 'text-amber-400' : 'text-emerald-400'
                                   }`}
                                 >
                                   {st.restaurantRevenue.toLocaleString('uk-UA')} ₴
                                 </div>
                                 <div className="text-[10px] mt-0.5">
                                   {willBeRemoved ? (
-                                    <span className="text-red-300 font-semibold">
-                                      Під скорочення
+                                    <span className="text-amber-300 font-semibold">
+                                      Поза планом
                                     </span>
                                   ) : isManager && isBelowThreshold ? (
-                                    <span className="text-emerald-400">Захищений (Manager)</span>
+                                    <span className="text-emerald-400">Керівник залу</span>
                                   ) : (
-                                    <span className="text-zinc-500">Рентабельний</span>
+                                    <span className="text-zinc-500">У межах плану</span>
                                   )}
                                 </div>
                               </td>
@@ -1101,14 +1042,14 @@ export function App() {
 
                 <div className="mt-4 pt-3 border-t border-white/5 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs text-zinc-400">
-                    Активний штат у БД: <b>{lookup?.staff.length || 0}</b> співроб.
+                    Працівників на зміні: <b>{lookup?.staff.length || 0}</b>
                   </span>
                   <button
                     onClick={handleRestoreDemoStaff}
                     className="text-xs bg-[#22222b] hover:bg-[#2c2c38] text-zinc-200 px-3.5 py-2 rounded-xl border border-white/10 transition cursor-pointer flex items-center gap-1.5"
                   >
                     <UserCheck className="w-3.5 h-3.5 text-[#ff6b00]" />
-                    <span>Повернути звільнених працівників у штат</span>
+                    <span>Відновити повний склад зміни</span>
                   </button>
                 </div>
               </div>
@@ -1116,32 +1057,29 @@ export function App() {
           )}
 
           {/* =================================================================== */}
-          {/* РОЗДІЛ 3: СКАЛЯРНА ТА ТАБЛИЧНА ФУНКЦІЇ (Автоматичний розрахунок)     */}
+          {/* СТОРІНКА 3: АНАЛІТИКА КУХОННИХ ЦЕХІВ                                */}
           {/* =================================================================== */}
           {activeNav === 'functions' && (
             <div className="space-y-6">
               <div className="bg-[#18181f] border border-white/5 rounded-3xl p-6 shadow-xl">
                 <div className="flex items-center gap-3 mb-5">
                   <div className="w-11 h-11 rounded-2xl bg-[#ff6b00]/15 text-[#ff6b00] flex items-center justify-center shrink-0">
-                    <FunctionSquare className="w-6 h-6" />
+                    <BarChart3 className="w-6 h-6" />
                   </div>
                   <div>
                     <h2 className="text-lg font-bold text-white">
-                      Аналітика T-SQL функцій (Скалярні та Таблична функції з ЛР №1)
+                      Аналітика продажів за стравами та кухонними цехами
                     </h2>
                     <p className="text-xs text-zinc-400">
-                      Оберіть страву або кухонний відділ — результати автоматично обчислюються на
-                      сервері MS SQL Server
+                      Оберіть позицію меню або підрозділ кухні для перегляду статистики замовлень
                     </p>
                   </div>
                 </div>
 
-                {/* 2 дропдауни без зайвої кнопки */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs text-zinc-400 block mb-1.5">
-                      Страва меню — параметр <code className="text-[#ff8533]">@DishName</code> для
-                      скалярної функції ЛР №1:
+                      Позиція меню для перевірки максимального чека:
                     </label>
                     <select
                       value={fnDishName}
@@ -1153,19 +1091,18 @@ export function App() {
                     >
                       {dishes.map((d) => (
                         <option key={d.dishID} value={d.name}>
-                          {d.name} (Продано: {d.totalSoldQuantity} порц.)
+                          {cleanText(d.name)} — продано {d.totalSoldQuantity} порц.
                         </option>
                       ))}
-                      <option value="Трюфельний Різотто (Відсутній)">
-                        Трюфельний Різотто (Перевірка відсутності замовлень)
+                      <option value="Трюфельний Різотто">
+                        Трюфельний Різотто — нова страва без замовлень
                       </option>
                     </select>
                   </div>
 
                   <div>
                     <label className="text-xs text-zinc-400 block mb-1.5">
-                      Відділ кухні — параметр <code className="text-emerald-400">@CategoryID</code>{' '}
-                      для підрахунку кількості та табличної функції:
+                      Підрозділ кухні / категорія меню:
                     </label>
                     <select
                       value={fnCategoryId}
@@ -1176,74 +1113,53 @@ export function App() {
                       }}
                       className="w-full bg-[#22222b] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-[#ff6b00] focus:outline-none"
                     >
-                      <option value={0}>0 — Усі відділи та кухонні цехи мережі</option>
+                      <option value={0}>Усі кухонні цехи мережі</option>
                       {lookup?.categories.map((c) => (
                         <option key={c.categoryID} value={c.categoryID}>
-                          #{c.categoryID} — {c.categoryName} ({c.kitchenStation})
+                          {cleanText(c.categoryName)} — {cleanText(c.kitchenStation)}
                         </option>
                       ))}
                     </select>
                   </div>
                 </div>
 
-                {/* Картки результатів скалярних функцій */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
                   <div className="bg-[#22222b] border border-[#ff6b00]/30 rounded-2xl p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                      <span className="text-xs font-semibold text-[#ff8533] uppercase tracking-wider">
-                        Скалярна функція №1 (Варіант 5 ЛР №1)
-                      </span>
-                      <code className="text-[11px] bg-black/40 px-2 py-0.5 rounded text-zinc-300">
-                        dbo.fn_GetMaxOrderForDish
-                      </code>
-                    </div>
-                    <div className="text-base font-bold text-white mt-1">
-                      {scalarResult?.maxOrderResult || 'Обчислення...'}
-                    </div>
-                    <div className="text-[11px] font-mono text-zinc-400 mt-2.5 bg-black/30 px-2.5 py-1.5 rounded-lg break-all">
-                      {scalarResult?.sqlExecuted?.[0]}
+                    <span className="text-xs font-semibold text-[#ff8533] uppercase tracking-wider block mb-1">
+                      Рекордне замовлення по обраній страві
+                    </span>
+                    <div className="text-lg font-bold text-white mt-1">
+                      {cleanText(scalarResult?.maxOrderResult) || 'Завантаження...'}
                     </div>
                   </div>
 
                   <div className="bg-[#22222b] border border-emerald-500/30 rounded-2xl p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                      <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                        Скалярна функція №2 (Кількість страв у відділі)
-                      </span>
-                      <code className="text-[11px] bg-black/40 px-2 py-0.5 rounded text-zinc-300">
-                        dbo.fn_GetCategoryDishCount
-                      </code>
-                    </div>
+                    <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-1">
+                      Активний асортимент обраного цеху
+                    </span>
                     <div className="text-2xl font-extrabold text-white mt-1">
                       {scalarResult?.categoryDishCount ?? 0}{' '}
                       <span className="text-sm font-normal text-zinc-400">
-                        позицій меню у вибраному відділі
+                        страв у технологічному меню відділу
                       </span>
-                    </div>
-                    <div className="text-[11px] font-mono text-zinc-400 mt-2.5 bg-black/30 px-2.5 py-1.5 rounded-lg break-all">
-                      {scalarResult?.sqlExecuted?.[1]}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Результат Табличної функції */}
+              {/* Зведена таблиця аналітики цеху */}
               <div className="bg-[#18181f] border border-white/5 rounded-3xl p-6 shadow-xl">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                   <div>
-                    <h3 className="font-bold text-base text-white flex items-center gap-2">
-                      <Database className="w-4 h-4 text-[#ff6b00]" />
-                      <span>
-                        Таблична функція: dbo.fn_GetDishesAnalyticsByCategory({fnCategoryId})
-                      </span>
+                    <h3 className="font-bold text-base text-white">
+                      Зведена відомість реалізації страв по кухні
                     </h3>
                     <p className="text-xs text-zinc-400 mt-0.5">
-                      Виконується запит:{' '}
-                      <code className="text-[#ff8533]">{tvfResult?.sqlExecuted}</code>
+                      Показники виручки, залишків та доступного денного ліміту приготування
                     </p>
                   </div>
                   <span className="text-xs bg-[#22222b] px-3 py-1 rounded-full text-zinc-300 border border-white/5">
-                    Рядків у вибірці: <b>{tvfResult?.rows.length || 0}</b>
+                    Позицій: <b>{tvfResult?.rows.length || 0}</b>
                   </span>
                 </div>
 
@@ -1251,33 +1167,38 @@ export function App() {
                   <table className="w-full text-left text-xs">
                     <thead className="bg-[#22222b] text-zinc-300 uppercase">
                       <tr>
-                        <th className="py-3 px-4">ID</th>
                         <th className="py-3 px-4">Страва</th>
-                        <th className="py-3 px-4">Категорія / Цех</th>
-                        <th className="py-3 px-4">Ресторан</th>
+                        <th className="py-3 px-4">Категорія</th>
+                        <th className="py-3 px-4">Кухонний цех</th>
+                        <th className="py-3 px-4">Заклад</th>
                         <th className="py-3 px-4 text-right">Ціна</th>
-                        <th className="py-3 px-4 text-right">Склад</th>
+                        <th className="py-3 px-4 text-right">На кухні</th>
                         <th className="py-3 px-4 text-right">Чеків</th>
                         <th className="py-3 px-4 text-right">Продано</th>
                         <th className="py-3 px-4 text-right">Виручка</th>
-                        <th className="py-3 px-4 text-right">До ліміту 100</th>
+                        <th className="py-3 px-4 text-right">Денний резерв</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
                       {tvfResult?.rows.map((row) => (
                         <tr key={row.dishID} className="hover:bg-white/5">
-                          <td className="py-2.5 px-4 font-mono text-zinc-400">#{row.dishID}</td>
-                          <td className="py-2.5 px-4 font-semibold text-white">{row.dishName}</td>
-                          <td className="py-2.5 px-4 text-zinc-300">
-                            {row.categoryName}{' '}
-                            <span className="text-zinc-500">({row.kitchenStation})</span>
+                          <td className="py-2.5 px-4 font-semibold text-white">
+                            {cleanText(row.dishName)}
                           </td>
-                          <td className="py-2.5 px-4 text-zinc-300">{row.restaurantName}</td>
+                          <td className="py-2.5 px-4 text-zinc-300">
+                            {cleanText(row.categoryName)}
+                          </td>
+                          <td className="py-2.5 px-4 text-zinc-400">
+                            {cleanText(row.kitchenStation)}
+                          </td>
+                          <td className="py-2.5 px-4 text-zinc-300">
+                            {cleanText(row.restaurantName)}
+                          </td>
                           <td className="py-2.5 px-4 text-right font-medium whitespace-nowrap">
                             {row.price.toFixed(2)} ₴
                           </td>
                           <td className="py-2.5 px-4 text-right whitespace-nowrap">
-                            {row.inStockQuantity} од.
+                            {row.inStockQuantity} порц.
                           </td>
                           <td className="py-2.5 px-4 text-right">{row.ordersCount}</td>
                           <td className="py-2.5 px-4 text-right font-bold text-white whitespace-nowrap">
@@ -1290,7 +1211,7 @@ export function App() {
                             <span
                               className={`px-2.5 py-0.5 rounded-full font-semibold ${
                                 row.remainingQuotaTo100 === 0
-                                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                                   : 'bg-emerald-500/15 text-emerald-400'
                               }`}
                             >
@@ -1307,88 +1228,106 @@ export function App() {
           )}
 
           {/* =================================================================== */}
-          {/* РОЗДІЛ 4: МОНІТОРИНГ ТРИГЕРІВ ТА ЖУРНАЛИ АУДИТУ СУБД (Лаб №2–3)     */}
+          {/* СТОРІНКА 4: ЖУРНАЛ КАСОВИХ ОПЕРАЦІЙ ТА ПРАВИЛ КУХНІ                 */}
           {/* =================================================================== */}
           {activeNav === 'audit' && (
             <div className="space-y-6">
-              {/* Активні тригери з системного каталогу sys.triggers */}
               <div className="bg-[#18181f] border border-white/5 rounded-3xl p-6 shadow-xl">
-                <div className="flex items-center justify-between gap-4 mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
-                      <ShieldCheck className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-base text-white">
-                        Активні DML-тригери бази даних RestaurantDB (з sys.triggers)
-                      </h3>
-                      <p className="text-xs text-zinc-400">
-                        Серверні правила, які автоматично контролюють усі операції INSERT та UPDATE
-                        у робочому процесі
-                      </p>
-                    </div>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-white">
+                      Активні правила безпеки та контролю каси
+                    </h3>
+                    <p className="text-xs text-zinc-400">
+                      Автоматичний контроль денних квот кухні, робочого графіка та змін у закритих
+                      чеках
+                    </p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {lookup?.triggers.map((tr) => (
-                    <div
-                      key={tr.triggerName}
-                      className="bg-[#22222b] border border-white/5 rounded-2xl p-4"
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
-                        <span className="text-xs font-mono font-bold text-[#ff8533]">
-                          {tr.triggerName}
-                        </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                          {tr.isDisabled ? 'Disabled' : 'Active'}
-                        </span>
-                      </div>
-                      <div className="text-xs text-zinc-300">
-                        Таблиця: <b className="text-white">dbo.{tr.tableName}</b> • Тип:{' '}
-                        <code className="text-amber-300">{tr.triggerType}</code>
-                      </div>
+                  <div className="bg-[#22222b] border border-white/5 rounded-2xl p-4">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="text-xs font-bold text-[#ff8533]">
+                        Контроль графіка кухні
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Активно
+                      </span>
                     </div>
-                  ))}
+                    <div className="text-xs text-zinc-300">
+                      Дозвіл на внесення нових страв у меню лише в робочі години зміни (09:00–18:00).
+                    </div>
+                  </div>
+
+                  <div className="bg-[#22222b] border border-white/5 rounded-2xl p-4">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="text-xs font-bold text-[#ff8533]">
+                        Аудит зміни оплати чеків
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Активно
+                      </span>
+                    </div>
+                    <div className="text-xs text-zinc-300">
+                      Автоматична фіксація часу кожної зміни типу оплати касиром у журналі чеків.
+                    </div>
+                  </div>
+
+                  <div className="bg-[#22222b] border border-white/5 rounded-2xl p-4">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="text-xs font-bold text-[#ff8533]">
+                        Контроль денної квоти страви
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Активно
+                      </span>
+                    </div>
+                    <div className="text-xs text-zinc-300">
+                      Обмеження максимального обсягу реалізації однієї позиції меню до 100 порцій.
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                {/* Таблиця аудиту змін замовлень dbo.OrdersLogs (тригер tr_OrdersLoging) */}
+                {/* Журнал змін замовлень */}
                 <div className="bg-[#18181f] border border-white/5 rounded-3xl p-6 shadow-xl">
                   <h3 className="font-bold text-base text-white mb-1 flex items-center gap-2">
                     <History className="w-4 h-4 text-[#ff6b00]" />
-                    <span>Журнал модифікацій чеків (таблиця dbo.OrdersLogs)</span>
+                    <span>Історія коригувань оплати чеків</span>
                   </h3>
                   <p className="text-xs text-zinc-400 mb-4">
-                    Заповнюється тригером <code className="text-[#ff8533]">tr_OrdersLoging</code>{' '}
-                    (AFTER UPDATE) щоразу, коли касир змінює тип оплати замовлення у правій панелі
+                    Записи про зміну способу розрахунку за замовленнями
                   </p>
 
                   <div className="overflow-x-auto border border-white/5 rounded-2xl max-h-80 overflow-y-auto">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-[#22222b] text-zinc-300 sticky top-0">
                         <tr>
-                          <th className="py-2.5 px-3.5">Log ID</th>
-                          <th className="py-2.5 px-3.5">Замовлення</th>
+                          <th className="py-2.5 px-3.5">Запис</th>
+                          <th className="py-2.5 px-3.5">Чек</th>
                           <th className="py-2.5 px-3.5">Страва</th>
                           <th className="py-2.5 px-3.5">Оплата</th>
-                          <th className="py-2.5 px-3.5">Час зміни (ModifyDate)</th>
+                          <th className="py-2.5 px-3.5">Час операції</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
                         {lookup?.orderLogs.map((ol) => (
                           <tr key={ol.id} className="hover:bg-white/5">
-                            <td className="py-2.5 px-3.5 font-mono text-zinc-400">#{ol.id}</td>
+                            <td className="py-2.5 px-3.5 font-mono text-zinc-400">№{ol.id}</td>
                             <td className="py-2.5 px-3.5 font-semibold text-white">
-                              №{ol.orderId} {ol.checkNo ? `(Чек #${ol.checkNo})` : ''}
+                              {ol.checkNo ? `Чек №${ol.checkNo}` : `Замовлення №${ol.orderId}`}
                             </td>
                             <td className="py-2.5 px-3.5 text-zinc-300">
-                              {ol.dishName || '—'}
+                              {cleanText(ol.dishName) || '—'}
                             </td>
                             <td className="py-2.5 px-3.5">
                               <span className="px-2 py-0.5 rounded-full bg-white/5 text-[#ff8533]">
-                                {ol.paymentType || '—'}
+                                {cleanText(ol.paymentType) || '—'}
                               </span>
                             </td>
                             <td className="py-2.5 px-3.5 text-zinc-400">
@@ -1401,39 +1340,39 @@ export function App() {
                   </div>
                 </div>
 
-                {/* Таблиця аудиту заблокованих спроб додавання страв dbo.DishesAttemptLogs */}
+                {/* Журнал позаурочних змін меню */}
                 <div className="bg-[#18181f] border border-white/5 rounded-3xl p-6 shadow-xl">
                   <h3 className="font-bold text-base text-white mb-1 flex items-center gap-2">
                     <Clock className="w-4 h-4 text-[#ff6b00]" />
-                    <span>Журнал блокувань меню (таблиця dbo.DishesAttemptLogs)</span>
+                    <span>Журнал запитів на зміну меню поза зміною</span>
                   </h3>
                   <p className="text-xs text-zinc-400 mb-4">
-                    Заповнюється тригером <code className="text-[#ff8533]">createOrdersTrigger</code>{' '}
-                    (INSTEAD OF INSERT) при спробі додати нову страву у вихідні або поза робочим
-                    часом (09:00–18:00)
+                    Запити на додавання нових страв, подані поза робочим графіком кухні
                   </p>
 
                   <div className="overflow-x-auto border border-white/5 rounded-2xl max-h-80 overflow-y-auto">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-[#22222b] text-zinc-300 sticky top-0">
                         <tr>
-                          <th className="py-2.5 px-3.5">LogId</th>
-                          <th className="py-2.5 px-3.5">Назва страви</th>
-                          <th className="py-2.5 px-3.5">Час спроби</th>
-                          <th className="py-2.5 px-3.5">Статус тригера</th>
+                          <th className="py-2.5 px-3.5">Запис</th>
+                          <th className="py-2.5 px-3.5">Страва</th>
+                          <th className="py-2.5 px-3.5">Час запиту</th>
+                          <th className="py-2.5 px-3.5">Примітка системи</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
                         {lookup?.auditLogs.map((log) => (
                           <tr key={log.logId} className="hover:bg-white/5">
-                            <td className="py-2.5 px-3.5 font-mono text-zinc-400">#{log.logId}</td>
+                            <td className="py-2.5 px-3.5 font-mono text-zinc-400">№{log.logId}</td>
                             <td className="py-2.5 px-3.5 font-medium text-white">
-                              {log.dishName}
+                              {cleanText(log.dishName)}
                             </td>
                             <td className="py-2.5 px-3.5 text-zinc-400 whitespace-nowrap">
                               {new Date(log.attemptDate).toLocaleString('uk-UA')}
                             </td>
-                            <td className="py-2.5 px-3.5 text-red-300">{log.statusMessage}</td>
+                            <td className="py-2.5 px-3.5 text-amber-300">
+                              {cleanText(log.statusMessage)}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1446,325 +1385,314 @@ export function App() {
         </main>
 
         {/* ===================================================================== */}
-        {/* ПРАВА ПАНЕЛЬ КАСИРА: MASTER-DETAIL ТА ОФОРМЛЕННЯ ЗАМОВЛЕННЯ           */}
+        {/* ПРАВА ПАНЕЛЬ КАСИРА: ВІДКРИВАЄТЬСЯ ТІЛЬКИ НА 1-Й СТОРІНЦІ ПРИ КЛІКУ НА СТРАВУ І МАЄ КНОПКУ ЗАКРИТТЯ */}
         {/* ===================================================================== */}
-        <aside className="w-full lg:w-[410px] xl:w-[440px] bg-[#15151b] border-t lg:border-t-0 lg:border-l border-white/5 p-6 flex flex-col justify-between shrink-0">
-          <div>
-            {/* Перемикач режиму правої панелі */}
-            <div className="bg-[#202029] p-1.5 rounded-full grid grid-cols-2 gap-1 mb-5 border border-white/5">
-              <button
-                onClick={() => setRightTab('details')}
-                className={`py-2 px-3 rounded-full text-xs font-semibold transition cursor-pointer ${
-                  rightTab === 'details'
-                    ? 'bg-[#2e2e3a] text-white shadow'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                Історія продажів (Detail)
-              </button>
-              <button
-                onClick={() => setRightTab('order')}
-                className={`py-2 px-3 rounded-full text-xs font-semibold transition cursor-pointer ${
-                  rightTab === 'order'
-                    ? 'bg-[#ff6b00] text-white shadow'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                Оформити замовлення
-              </button>
-            </div>
-
-            {masterDetail ? (
-              <>
-                {/* ШАПКА ОБРАНОЇ СТРАВИ (MASTER-ОБ'ЄКТ БЕЗ ДУБЛЮВАННЯ) */}
-                <div className="bg-[#1d1d26] rounded-3xl p-4 border border-white/5 mb-5">
-                  <div className="flex gap-3.5 items-center">
-                    <img
-                      src={getDishImage(masterDetail.dish.name)}
-                      alt={masterDetail.dish.name}
-                      className="w-20 h-20 rounded-2xl object-cover shrink-0 border border-white/10"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-semibold text-[#ff8533] uppercase tracking-wider truncate">
-                          {masterDetail.dish.categoryName}
-                        </span>
-                        <span className="text-xs font-mono text-zinc-400 shrink-0">
-                          ID #{masterDetail.dish.dishID}
-                        </span>
-                      </div>
-                      <h3 className="font-bold text-base text-white leading-snug mt-0.5">
-                        {masterDetail.dish.name}
-                      </h3>
-                      <div className="flex items-center gap-2 text-xs text-zinc-400 mt-1">
-                        <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />
-                        <span>{masterDetail.dish.restaurantRating}</span>
-                        <span>•</span>
-                        <span className="truncate">{masterDetail.dish.restaurantName}</span>
-                      </div>
-                      <div className="text-base font-extrabold text-white mt-1.5">
-                        ₴{masterDetail.dish.price.toFixed(2)}{' '}
-                        <span className="text-xs font-normal text-zinc-400">
-                          / порція (Склад: {masterDetail.dish.quantity} од.)
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 mt-3.5 pt-3 border-t border-white/5 text-xs">
-                    <div className="bg-[#15151b] rounded-xl p-2.5">
-                      <div className="text-zinc-500 flex items-center gap-1">
-                        <Truck className="w-3.5 h-3.5 text-[#ff6b00]" />
-                        <span>Постачальник:</span>
-                      </div>
-                      <div className="font-semibold text-zinc-200 truncate mt-0.5">
-                        {masterDetail.dish.supplierCompany}
-                      </div>
-                    </div>
-                    <div className="bg-[#15151b] rounded-xl p-2.5">
-                      <div className="text-zinc-500 flex items-center gap-1">
-                        <Building2 className="w-3.5 h-3.5 text-[#ff6b00]" />
-                        <span>Кухонний цех:</span>
-                      </div>
-                      <div className="font-semibold text-zinc-200 truncate mt-0.5">
-                        {masterDetail.dish.kitchenStation}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 bg-[#ff6b00]/10 border border-[#ff6b00]/25 rounded-2xl px-3.5 py-2.5 flex items-center gap-2.5">
-                    <Award className="w-4 h-4 text-[#ff6b00] shrink-0" />
-                    <div className="text-xs min-w-0">
-                      <span className="text-zinc-400 block text-[10px] uppercase">
-                        Рекордне замовлення (fn_GetMaxOrderForDish):
-                      </span>
-                      <span className="font-semibold text-white">
-                        {masterDetail.maxOrderHighlight}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* АБО СПИСОК ПРОДАЖІВ СТРАВИ, АБО ЖИВА ФОРМА КАСИ */}
-                {rightTab === 'details' ? (
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-bold text-sm text-white flex items-center gap-2">
-                        <Receipt className="w-4 h-4 text-[#ff6b00]" />
-                        <span>Чеки по страві (dbo.Orders)</span>
-                      </h4>
-                      <span className="text-xs text-zinc-400">
-                        Усього: <b>{masterDetail.salesHistory.length}</b>
-                      </span>
-                    </div>
-
-                    {loadingDetails ? (
-                      <div className="py-12 text-center text-xs text-zinc-500">
-                        Завантаження чеків...
-                      </div>
-                    ) : masterDetail.salesHistory.length === 0 ? (
-                      <div className="bg-[#1d1d26] border border-white/5 rounded-2xl p-6 text-center">
-                        <Package className="w-8 h-8 text-zinc-500 mx-auto mb-2" />
-                        <p className="text-xs text-zinc-400">
-                          Для цієї страви ще немає продажів у таблиці Orders.
-                        </p>
-                        <button
-                          onClick={() => setRightTab('order')}
-                          className="mt-3 text-xs text-[#ff8533] hover:underline cursor-pointer font-medium"
-                        >
-                          + Оформити перше замовлення
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
-                        {masterDetail.salesHistory.map((sale) => (
-                          <div
-                            key={sale.orderID}
-                            className="bg-[#1d1d26] hover:bg-[#23232e] border border-white/5 rounded-2xl p-3.5 flex items-center justify-between gap-2 transition"
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-10 h-10 rounded-xl bg-[#272733] flex flex-col items-center justify-center text-xs font-bold text-[#ff8533] shrink-0">
-                                <span>#{sale.checkNo}</span>
-                              </div>
-                              <div className="min-w-0">
-                                <div className="text-xs font-semibold text-white flex flex-wrap items-center gap-1.5">
-                                  <span>Замовлення №{sale.orderID}</span>
-                                  <button
-                                    onClick={() =>
-                                      handleCycleOrderPayment(sale.orderID, sale.paymentType)
-                                    }
-                                    className="text-[10px] px-2 py-0.5 rounded-full bg-[#ff6b00]/15 hover:bg-[#ff6b00] text-[#ff8533] hover:text-white border border-[#ff6b00]/30 transition cursor-pointer"
-                                    title="Натисніть, щоб змінити спосіб оплати (спрацює тригер tr_OrdersLoging)"
-                                  >
-                                    {sale.paymentType} ↻
-                                  </button>
-                                </div>
-                                <div className="text-[11px] text-zinc-400 mt-0.5 truncate">
-                                  {new Date(sale.orderDate).toLocaleDateString('uk-UA')} •{' '}
-                                  {sale.staffName}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="text-right shrink-0">
-                              <div className="text-sm font-extrabold text-white">
-                                ₴{sale.lineTotal.toLocaleString('uk-UA')}
-                              </div>
-                              <div className="text-[11px] text-[#ff8533] font-medium">
-                                {sale.quantity} порц.
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  /* РОБОЧА ФОРМА ОФОРМЛЕННЯ ЗАМОВЛЕННЯ КАСИРОМ (dbo.sp_CreateOrder) */
-                  <div className="bg-[#1d1d26] border border-white/5 rounded-3xl p-4 space-y-3.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-white">
-                        Оформлення чека (dbo.sp_CreateOrder)
-                      </span>
-                      <span className="text-[11px] text-zinc-400">
-                        Доступно: <b>{masterDetail.dish.quantity}</b> порц.
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[11px] text-zinc-400 block mb-1">
-                          Номер чека (@CheckNo)
-                        </label>
-                        <input
-                          type="number"
-                          value={orderCheckNo}
-                          onChange={(e) => setOrderCheckNo(Number(e.target.value))}
-                          className="w-full bg-[#15151b] border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:border-[#ff6b00] focus:outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[11px] text-zinc-400 block mb-1">
-                          Кількість порцій (@Quantity)
-                        </label>
-                        <input
-                          type="number"
-                          value={orderQuantity}
-                          onChange={(e) => setOrderQuantity(Number(e.target.value))}
-                          className="w-full bg-[#15151b] border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:border-[#ff6b00] focus:outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] text-zinc-400 block mb-1">
-                        Обслуговуючий офіціант (@StaffID)
-                      </label>
-                      <select
-                        value={orderStaffId}
-                        onChange={(e) => setOrderStaffId(Number(e.target.value))}
-                        className="w-full bg-[#15151b] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-[#ff6b00] focus:outline-none"
-                      >
-                        {lookup?.staff.map((s) => (
-                          <option key={s.staffID} value={s.staffID}>
-                            #{s.staffID} — {s.name} ({s.information}, {s.restaurantName})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] text-zinc-400 block mb-1">
-                        Спосіб оплати (@PaymentType)
-                      </label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {['Картка', 'Готівка', 'Безготівковий'].map((pt) => (
-                          <button
-                            key={pt}
-                            type="button"
-                            onClick={() => setOrderPaymentType(pt)}
-                            className={`py-2 px-2 rounded-xl text-xs font-medium border transition cursor-pointer ${
-                              orderPaymentType === pt
-                                ? 'bg-[#ff6b00]/20 border-[#ff6b00] text-white'
-                                : 'bg-[#15151b] border-white/5 text-zinc-400'
-                            }`}
-                          >
-                            {pt}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={handleCreateOrder}
-                      className="w-full bg-[#ff6b00] hover:bg-[#ff7b1a] text-white font-semibold py-3 rounded-2xl shadow-lg shadow-[#ff6b00]/25 transition cursor-pointer flex items-center justify-center gap-2 text-sm"
-                    >
-                      <CreditCard className="w-4 h-4" />
-                      <span>
-                        Провести замовлення (₴
-                        {Math.max(0, masterDetail.dish.price * orderQuantity).toFixed(2)})
-                      </span>
-                    </button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="py-20 text-center text-sm text-zinc-500">
-                Оберіть страву зі списку зліва
-              </div>
-            )}
-          </div>
-
-          {/* НИЖНІЙ ПІДСУМКОВИЙ БЛОК */}
-          {masterDetail && (
-            <div className="mt-6 pt-4 border-t border-white/10">
-              <div className="space-y-2 text-xs">
-                <div className="flex justify-between text-zinc-400">
-                  <span>Усього продано порцій страви</span>
-                  <span className="font-semibold text-white">
-                    {masterDetail.dish.totalSoldQuantity} / 100 порц.
-                  </span>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>Доступний залишок на складі</span>
-                  <span className="font-semibold text-white">
-                    {masterDetail.dish.quantity} порц.
-                  </span>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>До ліміту тригера tr_PreventOver100Sales</span>
-                  <span
-                    className={`font-bold ${
-                      100 - masterDetail.dish.totalSoldQuantity <= 0
-                        ? 'text-red-400'
-                        : 'text-emerald-400'
+        {showRightPanel && (
+          <aside className="w-full lg:w-[410px] xl:w-[430px] bg-[#15151b] border-t lg:border-t-0 lg:border-l border-white/5 p-6 flex flex-col justify-between shrink-0 animate-in slide-in-from-right duration-200">
+            <div>
+              {/* Верхній бар правої панелі: перемикач режиму + кнопка Закрити (X) */}
+              <div className="flex items-center gap-2 mb-5">
+                <div className="flex-1 bg-[#202029] p-1.5 rounded-full grid grid-cols-2 gap-1 border border-white/5">
+                  <button
+                    onClick={() => setRightTab('details')}
+                    className={`py-2 px-3 rounded-full text-xs font-semibold transition cursor-pointer ${
+                      rightTab === 'details'
+                        ? 'bg-[#2e2e3a] text-white shadow'
+                        : 'text-zinc-400 hover:text-white'
                     }`}
                   >
-                    {Math.max(0, 100 - masterDetail.dish.totalSoldQuantity)} порц.
-                  </span>
+                    Історія продажів
+                  </button>
+                  <button
+                    onClick={() => setRightTab('order')}
+                    className={`py-2 px-3 rounded-full text-xs font-semibold transition cursor-pointer ${
+                      rightTab === 'order'
+                        ? 'bg-[#ff6b00] text-white shadow'
+                        : 'text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    Нове замовлення
+                  </button>
                 </div>
-                <div className="flex justify-between items-baseline pt-3 border-t border-white/10">
-                  <span className="text-sm font-bold text-white">Виручка по страві</span>
-                  <span className="text-xl font-extrabold text-[#ff8533]">
-                    ₴{masterDetail.dish.totalRevenue.toLocaleString('uk-UA')}
-                  </span>
-                </div>
+
+                <button
+                  onClick={() => setSelectedDishId(null)}
+                  className="w-10 h-10 rounded-full bg-[#202029] hover:bg-[#2c2c38] text-zinc-400 hover:text-white flex items-center justify-center border border-white/5 transition cursor-pointer shrink-0"
+                  title="Закрити картку страви"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
-              <button
-                onClick={() => setRightTab(rightTab === 'details' ? 'order' : 'details')}
-                className="mt-4 w-full bg-[#23232e] hover:bg-[#2c2c3a] text-white font-semibold py-3 px-4 rounded-2xl text-xs transition cursor-pointer flex items-center justify-center gap-2 border border-white/5"
-              >
-                <ShoppingBag className="w-4 h-4 text-[#ff6b00]" />
-                <span>
-                  {rightTab === 'details'
-                    ? 'Перейти до оформлення замовлення'
-                    : 'Повернутися до історії чеків'}
-                </span>
-              </button>
+              {masterDetail ? (
+                <>
+                  {/* ШАПКА ОБРАНОЇ СТРАВИ */}
+                  <div className="bg-[#1d1d26] rounded-3xl p-4 border border-white/5 mb-5">
+                    <div className="flex gap-3.5 items-center">
+                      <img
+                        src={getDishImage(masterDetail.dish.name)}
+                        alt={masterDetail.dish.name}
+                        className="w-20 h-20 rounded-2xl object-cover shrink-0 border border-white/10"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[11px] font-semibold text-[#ff8533] uppercase tracking-wider block truncate">
+                          {cleanText(masterDetail.dish.categoryName)}
+                        </span>
+                        <h3 className="font-bold text-base text-white leading-snug mt-0.5">
+                          {cleanText(masterDetail.dish.name)}
+                        </h3>
+                        <div className="flex items-center gap-2 text-xs text-zinc-400 mt-1">
+                          <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />
+                          <span>{masterDetail.dish.restaurantRating}</span>
+                          <span>•</span>
+                          <span className="truncate">
+                            {cleanText(masterDetail.dish.restaurantName)}
+                          </span>
+                        </div>
+                        <div className="text-base font-extrabold text-white mt-1.5">
+                          ₴{masterDetail.dish.price.toFixed(2)}{' '}
+                          <span className="text-xs font-normal text-zinc-400">
+                            • На кухні: {masterDetail.dish.quantity} порц.
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mt-3.5 pt-3 border-t border-white/5 text-xs">
+                      <div className="bg-[#15151b] rounded-xl p-2.5">
+                        <div className="text-zinc-500 flex items-center gap-1">
+                          <Truck className="w-3.5 h-3.5 text-[#ff6b00]" />
+                          <span>Постачальник:</span>
+                        </div>
+                        <div className="font-semibold text-zinc-200 truncate mt-0.5">
+                          {cleanText(masterDetail.dish.supplierCompany)}
+                        </div>
+                      </div>
+                      <div className="bg-[#15151b] rounded-xl p-2.5">
+                        <div className="text-zinc-500 flex items-center gap-1">
+                          <Building2 className="w-3.5 h-3.5 text-[#ff6b00]" />
+                          <span>Кухонний цех:</span>
+                        </div>
+                        <div className="font-semibold text-zinc-200 truncate mt-0.5">
+                          {cleanText(masterDetail.dish.kitchenStation)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 bg-[#ff6b00]/10 border border-[#ff6b00]/25 rounded-2xl px-3.5 py-2.5 flex items-center gap-2.5">
+                      <Award className="w-4 h-4 text-[#ff6b00] shrink-0" />
+                      <div className="text-xs min-w-0">
+                        <span className="text-zinc-400 block text-[10px] uppercase">
+                          Найбільший чек по страві:
+                        </span>
+                        <span className="font-semibold text-white">
+                          {cleanText(masterDetail.maxOrderHighlight)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ІСТОРІЯ ЧЕКІВ АБО ФОРМА ОФОРМЛЕННЯ */}
+                  {rightTab === 'details' ? (
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-bold text-sm text-white flex items-center gap-2">
+                          <Receipt className="w-4 h-4 text-[#ff6b00]" />
+                          <span>Історія чеків по страві</span>
+                        </h4>
+                        <span className="text-xs text-zinc-400">
+                          Чеків: <b>{masterDetail.salesHistory.length}</b>
+                        </span>
+                      </div>
+
+                      {loadingDetails ? (
+                        <div className="py-12 text-center text-xs text-zinc-500">
+                          Завантаження чеків...
+                        </div>
+                      ) : masterDetail.salesHistory.length === 0 ? (
+                        <div className="bg-[#1d1d26] border border-white/5 rounded-2xl p-6 text-center">
+                          <Package className="w-8 h-8 text-zinc-500 mx-auto mb-2" />
+                          <p className="text-xs text-zinc-400">
+                            За цією стравою ще немає закритих чеків.
+                          </p>
+                          <button
+                            onClick={() => setRightTab('order')}
+                            className="mt-3 text-xs text-[#ff8533] hover:underline cursor-pointer font-medium"
+                          >
+                            + Оформити перше замовлення
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
+                          {masterDetail.salesHistory.map((sale) => (
+                            <div
+                              key={sale.orderID}
+                              className="bg-[#1d1d26] hover:bg-[#23232e] border border-white/5 rounded-2xl p-3.5 flex items-center justify-between gap-2 transition"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-10 h-10 rounded-xl bg-[#272733] flex flex-col items-center justify-center text-xs font-bold text-[#ff8533] shrink-0">
+                                  <span>№{sale.checkNo}</span>
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="text-xs font-semibold text-white flex flex-wrap items-center gap-1.5">
+                                    <span>Чек №{sale.checkNo}</span>
+                                    <button
+                                      onClick={() =>
+                                        handleCycleOrderPayment(sale.orderID, sale.paymentType)
+                                      }
+                                      className="text-[10px] px-2 py-0.5 rounded-full bg-[#ff6b00]/15 hover:bg-[#ff6b00] text-[#ff8533] hover:text-white border border-[#ff6b00]/30 transition cursor-pointer"
+                                      title="Змінити спосіб оплати"
+                                    >
+                                      {cleanText(sale.paymentType)} ↻
+                                    </button>
+                                  </div>
+                                  <div className="text-[11px] text-zinc-400 mt-0.5 truncate">
+                                    {new Date(sale.orderDate).toLocaleDateString('uk-UA')} •{' '}
+                                    {cleanText(sale.staffName)}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="text-right shrink-0">
+                                <div className="text-sm font-extrabold text-white">
+                                  ₴{sale.lineTotal.toLocaleString('uk-UA')}
+                                </div>
+                                <div className="text-[11px] text-[#ff8533] font-medium">
+                                  {sale.quantity} порц.
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* ФОРМА ОФОРМЛЕННЯ ЗАМОВЛЕННЯ */
+                    <div className="bg-[#1d1d26] border border-white/5 rounded-3xl p-4 space-y-3.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-white">Новий касовий чек</span>
+                        <span className="text-[11px] text-zinc-400">
+                          На кухні: <b>{masterDetail.dish.quantity}</b> порц.
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[11px] text-zinc-400 block mb-1">Номер чека</label>
+                          <input
+                            type="number"
+                            value={orderCheckNo}
+                            onChange={(e) => setOrderCheckNo(Number(e.target.value))}
+                            className="w-full bg-[#15151b] border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:border-[#ff6b00] focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-zinc-400 block mb-1">
+                            Кількість порцій
+                          </label>
+                          <input
+                            type="number"
+                            value={orderQuantity}
+                            onChange={(e) => setOrderQuantity(Number(e.target.value))}
+                            className="w-full bg-[#15151b] border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:border-[#ff6b00] focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] text-zinc-400 block mb-1">Офіціант</label>
+                        <select
+                          value={orderStaffId}
+                          onChange={(e) => setOrderStaffId(Number(e.target.value))}
+                          className="w-full bg-[#15151b] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-[#ff6b00] focus:outline-none"
+                        >
+                          {lookup?.staff.map((s) => (
+                            <option key={s.staffID} value={s.staffID}>
+                              {cleanText(s.name)} — {cleanText(s.restaurantName)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] text-zinc-400 block mb-1">
+                          Спосіб оплати
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {['Картка', 'Готівка', 'Безготівковий'].map((pt) => (
+                            <button
+                              key={pt}
+                              type="button"
+                              onClick={() => setOrderPaymentType(pt)}
+                              className={`py-2 px-2 rounded-xl text-xs font-medium border transition cursor-pointer ${
+                                orderPaymentType === pt
+                                  ? 'bg-[#ff6b00]/20 border-[#ff6b00] text-white'
+                                  : 'bg-[#15151b] border-white/5 text-zinc-400'
+                              }`}
+                            >
+                              {pt}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleCreateOrder}
+                        className="w-full bg-[#ff6b00] hover:bg-[#ff7b1a] text-white font-semibold py-3 rounded-2xl shadow-lg shadow-[#ff6b00]/25 transition cursor-pointer flex items-center justify-center gap-2 text-sm"
+                      >
+                        <CreditCard className="w-4 h-4" />
+                        <span>
+                          Оплатити замовлення (₴
+                          {Math.max(0, masterDetail.dish.price * orderQuantity).toFixed(2)})
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="py-16 text-center text-xs text-zinc-500">Завантаження...</div>
+              )}
             </div>
-          )}
-        </aside>
+
+            {/* НИЖНІЙ ПІДСУМКОВИЙ БЛОК */}
+            {masterDetail && (
+              <div className="mt-6 pt-4 border-t border-white/10">
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between text-zinc-400">
+                    <span>Продано порцій за зміну</span>
+                    <span className="font-semibold text-white">
+                      {masterDetail.dish.totalSoldQuantity} / 100 порц.
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-zinc-400">
+                    <span>Доступно на кухні</span>
+                    <span className="font-semibold text-white">
+                      {masterDetail.dish.quantity} порц.
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-zinc-400">
+                    <span>Залишок денної квоти кухні</span>
+                    <span
+                      className={`font-bold ${
+                        100 - masterDetail.dish.totalSoldQuantity <= 0
+                          ? 'text-amber-400'
+                          : 'text-emerald-400'
+                      }`}
+                    >
+                      {Math.max(0, 100 - masterDetail.dish.totalSoldQuantity)} порц.
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-baseline pt-3 border-t border-white/10">
+                    <span className="text-sm font-bold text-white">Виручка по страві</span>
+                    <span className="text-xl font-extrabold text-[#ff8533]">
+                      ₴{masterDetail.dish.totalRevenue.toLocaleString('uk-UA')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </aside>
+        )}
       </div>
     </div>
   );

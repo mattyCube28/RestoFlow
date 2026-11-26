@@ -283,14 +283,9 @@ public class RestaurantController : ControllerBase
         return Ok(new
         {
             dishName,
-            maxOrderResult = maxOrderInfo ?? $"Відсутні замовлення товару «{dishName}»",
+            maxOrderResult = (maxOrderInfo ?? $"Замовлення для страви відсутні").Replace("«", "").Replace("»", "").Replace("\"", ""),
             categoryId,
-            categoryDishCount = dishCountInCategory,
-            sqlExecuted = new[]
-            {
-                $"SELECT dbo.fn_GetMaxOrderForDish(N'{dishName}');",
-                $"SELECT dbo.fn_GetCategoryDishCount({categoryId});"
-            }
+            categoryDishCount = dishCountInCategory
         });
     }
 
@@ -351,7 +346,7 @@ public class RestaurantController : ControllerBase
             {
                 success = true,
                 procedure = "dbo.sp_CreateOrder",
-                message = $"Замовлення (Чек #{request.CheckNo}, кількість: {request.Quantity} порц.) успішно проведено через збережену процедуру!"
+                message = $"Чек №{request.CheckNo} ({request.Quantity} порц.) успішно оформлено та передано на кухню."
             });
         }
         catch (SqlException ex)
@@ -388,7 +383,7 @@ public class RestaurantController : ControllerBase
             {
                 success = true,
                 procedure = "dbo.sp_AddMenuDish",
-                message = $"Страву «{request.Name}» успішно додано до меню через збережену процедуру dbo.sp_AddMenuDish!"
+                message = $"Страву {request.Name} успішно додано до меню закладу."
             });
         }
         catch (SqlException ex)
@@ -425,7 +420,7 @@ public class RestaurantController : ControllerBase
                 procedure = "dbo.sp_RemoveUnderperformingStaff",
                 removedCount,
                 remainingCount = afterCount,
-                message = $"Процедуру dbo.sp_RemoveUnderperformingStaff(@MinSalesThreshold = {request.MinSalesThreshold} грн) виконано. Звільнено працівників (окрім Manager): {removedCount}."
+                message = $"Оптимізацію змін за планом виручки {request.MinSalesThreshold} грн завершено. Скорочено позицій: {removedCount}."
             });
         }
         catch (SqlException ex)
@@ -467,11 +462,11 @@ public class RestaurantController : ControllerBase
             END";
 
         await conn.ExecuteAsync(sql);
-        return Ok(new { success = true, message = "Штат працівників (Сидоренко С.М., Ткаченко Т.І., Ковальчук О.В., Мельник Д.С.) відновлено у таблиці dbo.Staff!" });
+        return Ok(new { success = true, message = "Повний склад зміни працівників відновлено." });
     }
 
     /// <summary>
-    /// Реальна робоча дія: Зміна способу оплати чека (UPDATE dbo.Orders), що автоматично запускає тригер tr_OrdersLoging із Лаб 2
+    /// Реальна робоча дія: Зміна способу оплати чека (UPDATE dbo.Orders), що автоматично запускає тригер tr_OrdersLoging
     /// </summary>
     [HttpPut("orders/{orderId:int}/payment")]
     public async Task<IActionResult> UpdateOrderPayment(int orderId, [FromBody] UpdateOrderPaymentRequest request)
@@ -485,13 +480,13 @@ public class RestaurantController : ControllerBase
 
             if (affected == 0)
             {
-                return NotFound(new { error = true, message = $"Замовлення №{orderId} не знайдено." });
+                return NotFound(new { error = true, message = $"Чек №{orderId} не знайдено." });
             }
 
             return Ok(new
             {
                 success = true,
-                message = $"Спосіб оплати замовлення №{orderId} змінено на «{request.PaymentType}». Тригер dbo.tr_OrdersLoging автоматично записав подію в таблицю аудиту dbo.OrdersLogs!"
+                message = $"Спосіб оплати замовлення №{orderId} змінено на {request.PaymentType}."
             });
         }
         catch (SqlException ex)
@@ -503,6 +498,13 @@ public class RestaurantController : ControllerBase
     private static object BuildSqlErrorResponse(SqlException ex, string sourceObject)
     {
         var primaryError = ex.Errors.Count > 0 ? ex.Errors[0] : null;
+        var cleanMsg = (ex.Message ?? string.Empty)
+            .Replace("The transaction ended in the trigger. The batch has been aborted.", "")
+            .Replace("\"", "")
+            .Replace("«", "")
+            .Replace("»", "")
+            .Trim();
+
         return new
         {
             error = true,
@@ -510,10 +512,10 @@ public class RestaurantController : ControllerBase
             source = sourceObject,
             sqlErrorNumber = ex.Number,
             sqlState = ex.State,
-            sqlClass = ex.Class, // Severity (наприклад, 16 для користувацьких RAISERROR)
+            sqlClass = ex.Class,
             procedureOrTrigger = string.IsNullOrWhiteSpace(ex.Procedure) ? sourceObject : ex.Procedure,
             lineNumber = primaryError?.LineNumber ?? ex.LineNumber,
-            message = ex.Message,
+            message = cleanMsg,
             timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
         };
     }
